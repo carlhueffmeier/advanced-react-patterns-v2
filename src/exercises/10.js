@@ -3,57 +3,107 @@
 import React from 'react'
 import {Switch} from '../switch'
 
-// Here we're going to simplify our component slightly so you
-// can learn the control props pattern in isolation from everything else.
-// Next you'll put the pieces together.
+function pickBy(obj, predicate) {
+  return Object.entries(obj).reduce(
+    (acc, [key, val]) =>
+      predicate(key, val) ? acc : {...acc, [key]: val},
+    {},
+  )
+}
+
+function omit(obj, keysToOmit) {
+  return pickBy(obj, key => keysToOmit.includes(key))
+}
+
+function pipe(firstFn = f => f, ...fns) {
+  return (...args) =>
+    fns.reduce((acc, fn) => fn(acc), firstFn(...args))
+}
 
 class Toggle extends React.Component {
+  static stateChangeTypes = {
+    toggle: '__Toggle_toggle__',
+  }
+  static defaultProps = {
+    onStateChange: () => {},
+    onToggle: () => {},
+  }
   state = {on: false}
-  // 🐨 let's add a function that can determine whether
-  // the on prop is controlled. Call it `isControlled`.
-  // It can accept a string called `prop` and should return
-  // true if that prop is controlled
-  // 💰 this.props[prop] !== undefined
-  //
-  // 🐨 Now let's add a function that can return the state
-  // whether it's coming from this.state or this.props
-  // Call it `getState` and have it return on from
-  // state if it's not controlled or props if it is.
-  toggle = () => {
-    // 🐨 if the toggle is controlled, then we shouldn't
-    // be updating state. Instead we should just call
-    // `this.props.onToggle` with what the state should be
+
+  isControlled(prop) {
+    return this.props[prop] !== undefined
+  }
+
+  getState(state = this.state) {
+    return Object.keys(state).reduce(
+      (combinedState, prop) => ({
+        ...combinedState,
+        [prop]: this.isControlled(prop)
+          ? this.props[prop]
+          : state[prop],
+      }),
+      {},
+    )
+  }
+
+  internalSetState(changes, callback) {
+    var allChanges
     this.setState(
-      ({on}) => ({on: !on}),
+      pipe(
+        // Create object containing all changes
+        prevState => {
+          allChanges =
+            typeof changes === 'function'
+              ? // allow user to pass `null` or `false` signifying no changes
+                changes(this.getState(prevState)) || {} // ↲
+              : changes
+          return allChanges
+        },
+        c => omit(c, 'type'),
+        // Pass along only uncontrolled changes (those are stored in state)
+        c => pickBy(c, key => this.isControlled(key)),
+        // Prevent rerender when there are no changes
+        c => (Object.keys(c).length > 0 ? c : null),
+      ),
       () => {
-        this.props.onToggle(this.state.on)
+        this.props.onStateChange(allChanges)
+        callback()
+      },
+    )
+  }
+
+  toggle = ({
+    on: newState,
+    type = Toggle.stateChangeTypes.toggle,
+  } = {}) => {
+    this.internalSetState(
+      ({on}) => ({
+        type,
+        on: typeof newState === 'boolean' ? newState : !on,
+      }),
+      () => {
+        this.props.onToggle(this.getState().on)
       },
     )
   }
   render() {
-    // 🐨 rather than getting state from this.state,
-    // let's use our `getState` method.
-    const {on} = this.state
-    return <Switch on={on} onClick={this.toggle} />
+    const {on} = this.getState()
+    // Prevent onClick accidentaly passing `type` to toggle
+    // by wrapping it in a function
+    return <Switch on={on} onClick={() => this.toggle()} />
   }
 }
-
-// These extra credit ideas are to expand this solution to elegantly handle
-// more state properties than just a single `on` state.
-// 💯 Make the `getState` function generic enough to support all state in
-// `this.state` even if we add any number of properties to state.
-// 💯 Add support for an `onStateChange` prop which is called whenever any
-// state changes. It should be called with `changes` and `state`
-// 💯 Add support for a `type` property in the `changes` you pass to
-// `onStateChange` so consumers can differentiate different state changes.
 
 // Don't make changes to the Usage component. It's here to show you how your
 // component is intended to be used and is used in the tests.
 // You can make all the tests pass by updating the Toggle component.
 class Usage extends React.Component {
   state = {bothOn: false}
-  handleToggle = on => {
-    this.setState({bothOn: on})
+  handleStateChange = changes => {
+    this.setState(
+      state =>
+        changes.on !== state.bothOn ? {bothOn: changes.on} : null,
+    )
   }
   render() {
     const {bothOn} = this.state
@@ -62,12 +112,12 @@ class Usage extends React.Component {
       <div>
         <Toggle
           on={bothOn}
-          onToggle={this.handleToggle}
+          onStateChange={this.handleStateChange}
           ref={toggle1Ref}
         />
         <Toggle
           on={bothOn}
-          onToggle={this.handleToggle}
+          onStateChange={this.handleStateChange}
           ref={toggle2Ref}
         />
       </div>
